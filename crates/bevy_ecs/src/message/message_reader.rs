@@ -165,7 +165,7 @@ unsafe impl<'w, 's, M: Message> SystemParam for PopulatedMessageReader<'w, 's, M
     ) -> Self::Item<'world, 'state> {
         // SAFETY: requirements are upheld by MessageReader's implementation
         unsafe {
-            PopulatedMessageReader::<'world, 'state, M>(MessageReader::<M>::get_param(
+            PopulatedMessageReader(MessageReader::get_param(
                 state,
                 system_meta,
                 world,
@@ -182,13 +182,10 @@ unsafe impl<'w, 's, M: Message> SystemParam for PopulatedMessageReader<'w, 's, M
         // SAFETY: requirements are upheld by MessageReader's implementation
         unsafe { MessageReader::<M>::validate_param(state, system_meta, world) }?;
 
-        let cursor = state.state.0.get();
-
-        // SAFETY: this access is registered in MessageReader's `init_access`
-        let messages = unsafe { world.get_resource::<Messages<M>>() }
-            .expect("missing message queue just after system param was validated");
-
-        if cursor.is_empty(messages) {
+        // SAFETY: requirements are upheld by MessageReader's implementation
+        let reader =
+            unsafe { MessageReader::get_param(state, system_meta, world, world.change_tick()) };
+        if reader.is_empty() {
             Err(SystemParamValidationError::skipped::<Self>(
                 "message queue is empty",
             ))
