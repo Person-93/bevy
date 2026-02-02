@@ -2,10 +2,12 @@
 use crate::message::MessageParIter;
 use crate::{
     message::{Message, MessageCursor, MessageIterator, MessageIteratorWithId, Messages},
-    system::{Local, Res, SystemParam},
+    system::{Local, Res, SystemParam, SystemParamValidationError},
 };
 
 /// Reads [`Message`]s of type `T` in order and tracks which messages have already been read.
+///
+/// Use [`PopulatedMessageReader<T>`] to skip the system if there are no messages.
 ///
 /// # Concurrency
 ///
@@ -111,5 +113,85 @@ impl<'w, 's, M: Message> MessageReader<'w, 's, M> {
     /// For usage, see [`MessageReader::is_empty()`].
     pub fn clear(&mut self) {
         self.reader.clear(&self.messages);
+    }
+}
+
+/// Reads [`Message`]s of type `T` in order and tracks which messages have already been read.
+/// Skips the system if there no messages.
+///
+/// Use [`MessageReader<T>`] to run the system even if there are no messages.
+#[derive(Debug)]
+pub struct PopulatedMessageReader<'w, 's, M: Message>(MessageReader<'w, 's, M>);
+
+impl<'w, 's, M: Message> core::ops::Deref for PopulatedMessageReader<'w, 's, M> {
+    type Target = MessageReader<'w, 's, M>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<'w, 's, M: Message> core::ops::DerefMut for PopulatedMessageReader<'w, 's, M> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+// SAFETY: relies on MessageReader to uphold soundness requirements
+unsafe impl<'w, 's, M: Message> SystemParam for PopulatedMessageReader<'w, 's, M> {
+    type State = <MessageReader<'w, 's, M> as SystemParam>::State;
+    type Item<'world, 'state> = PopulatedMessageReader<'world, 'state, M>;
+
+    fn init_state(world: &mut crate::prelude::World) -> Self::State {
+        MessageReader::<M>::init_state(world)
+    }
+
+    fn init_access(
+        state: &Self::State,
+        system_meta: &mut crate::system::SystemMeta,
+        component_access_set: &mut crate::query::FilteredAccessSet,
+        world: &mut crate::prelude::World,
+    ) {
+        MessageReader::<M>::init_access(state, system_meta, component_access_set, world);
+    }
+
+    unsafe fn get_param<'world, 'state>(
+        state: &'state mut Self::State,
+        system_meta: &crate::system::SystemMeta,
+        world: crate::world::unsafe_world_cell::UnsafeWorldCell<'world>,
+        change_tick: crate::change_detection::Tick,
+    ) -> Self::Item<'world, 'state> {
+        // SAFETY: requirements are upheld by MessageReader's implementation
+        unsafe {
+            PopulatedMessageReader::<'world, 'state, M>(MessageReader::<M>::get_param(
+                state,
+                system_meta,
+                world,
+                change_tick,
+            ))
+        }
+    }
+
+    unsafe fn validate_param(
+        state: &mut Self::State,
+        system_meta: &crate::system::SystemMeta,
+        world: crate::world::unsafe_world_cell::UnsafeWorldCell,
+    ) -> Result<(), SystemParamValidationError> {
+        // SAFETY: requirements are upheld by MessageReader's implementation
+        unsafe { MessageReader::<M>::validate_param(state, system_meta, world) }?;
+
+        let cursor = state.state.0.get();
+
+        // SAFETY: this access is registered in MessageReader's `init_access`
+        let messages = unsafe { world.get_resource::<Messages<M>>() }
+            .expect("missing message queue just after system param was validated");
+
+        if cursor.is_empty(messages) {
+            Err(SystemParamValidationError::skipped::<Self>(
+                "message queue is empty",
+            ))
+        } else {
+            Ok(())
+        }
     }
 }
