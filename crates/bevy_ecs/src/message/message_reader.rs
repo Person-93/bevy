@@ -120,6 +120,8 @@ impl<'w, 's, M: Message> MessageReader<'w, 's, M> {
 /// Skips the system if there no messages.
 ///
 /// Use [`MessageReader<T>`] to run the system even if there are no messages.
+///
+/// Use the [`on_message`](crate::prelude::on_message) run condition to skip the system based on messages that it doesn't read.
 #[derive(Debug)]
 pub struct PopulatedMessageReader<'w, 's, M: Message>(MessageReader<'w, 's, M>);
 
