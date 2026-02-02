@@ -195,3 +195,45 @@ unsafe impl<'w, 's, M: Message> SystemParam for PopulatedMessageReader<'w, 's, M
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    use super::*;
+    use crate::message::MessageRegistry;
+    use crate::prelude::*;
+    use bevy_platform::sync::Arc;
+
+    #[test]
+    fn test_populated_message_reader() {
+        let system_ran = Arc::new(AtomicBool::new(false));
+
+        let mut world = World::new();
+        MessageRegistry::register_message::<TheMessage>(&mut world);
+
+        let mut schedule = Schedule::default();
+        schedule.add_systems({
+            let system_ran = system_ran.clone();
+            move |mut _reader: PopulatedMessageReader<TheMessage>| {
+                system_ran.store(true, Ordering::SeqCst);
+            }
+        });
+
+        schedule.run(&mut world);
+        assert!(
+            !system_ran.load(Ordering::SeqCst),
+            "system with PopulatedMessageReader should have been skipped"
+        );
+
+        world.write_message(TheMessage);
+        schedule.run(&mut world);
+        assert!(
+            system_ran.load(Ordering::SeqCst),
+            "system with PopulatedMessageReader should NOT have been skipped"
+        );
+
+        #[derive(Message)]
+        struct TheMessage;
+    }
+}
