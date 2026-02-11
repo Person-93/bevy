@@ -866,17 +866,23 @@ macro_rules! impl_param_set {
             type Item<'w, 's> = ParamSet<'w, 's, ($($param,)*)>;
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                use bevy_platform::sync::Mutex;
+                use bevy_platform::sync::RwLock;
 
-                static SHARED: Mutex<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
-                    Mutex::new(HashMap::new());
-                SHARED.lock().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(|| {
-                    let mut shared = Vec::new();
-                    $(shared.extend($param::shared());)*
+                static VTABLES: RwLock<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
+                    RwLock::new(HashMap::new());
 
-                    shared.sort_unstable();
-                    shared.dedup();
+                if let Some(vtable) = VTABLES.read().unwrap().get(&TypeId::of::<Self::State>()) {
+                    return vtable;
+                }
 
+                let mut shared = Vec::new();
+                $(shared.extend($param::shared());)*
+
+                shared.sort_unstable();
+                shared.dedup();
+
+
+                VTABLES.write().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(move || {
                     shared.leak()
                 })
             }
@@ -2478,17 +2484,22 @@ macro_rules! impl_system_param_tuple {
             type Item<'w, 's> = ($($param::Item::<'w, 's>,)*);
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                use bevy_platform::sync::Mutex;
+                use bevy_platform::sync::RwLock;
 
-                static SHARED: Mutex<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
-                    Mutex::new(HashMap::new());
-                SHARED.lock().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(|| {
-                    let mut shared = Vec::new();
-                    $(shared.extend($param::shared());)*
+                static VTABLES: RwLock<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
+                    RwLock::new(HashMap::new());
 
-                    shared.sort_unstable();
-                    shared.dedup();
+                if let Some(vtable) = VTABLES.read().unwrap().get(&TypeId::of::<Self::State>()) {
+                    return vtable;
+                }
 
+                let mut shared = Vec::new();
+                $(shared.extend($param::shared());)*
+
+                shared.sort_unstable();
+                shared.dedup();
+
+                VTABLES.write().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(move || {
                     shared.leak()
                 })
             }
