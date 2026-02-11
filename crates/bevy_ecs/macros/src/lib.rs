@@ -363,6 +363,7 @@ fn derive_system_param_impl(
     let state_struct_visibility = &ast.vis;
     let state_struct_name = ensure_no_collision(format_ident!("FetchState"), token_stream);
 
+    let mut shared_self = None;
     let mut builder_name = None;
     for meta in ast
         .attrs
@@ -373,11 +374,23 @@ fn derive_system_param_impl(
             if nested.path.is_ident("builder") {
                 builder_name = Some(format_ident!("{struct_name}Builder"));
                 Ok(())
+            } else if nested.path.is_ident("shared_state") {
+                shared_self =
+                    Some(quote! { shared.push(#path::system::SharedStateVTable::new::<Self>()) });
+                Ok(())
             } else {
                 Err(nested.error("Unsupported attribute"))
             }
         })?;
     }
+
+    let shared_states = fields
+        .iter()
+        .fold(shared_self.unwrap_or_default(), |mut tokens, field| {
+            let ty = &field.ty;
+            tokens.extend(quote! { shared.extend(<#ty as SystemParam>::shared()); });
+            tokens
+        });
 
     let builder = builder_name.map(|builder_name| {
         let builder_type_parameters: Vec<Ident> = field_members.iter().map(|m| format_ident!("B{}", m)).collect();
@@ -399,10 +412,21 @@ fn derive_system_param_impl(
             > #path::system::SystemParamBuilder<#generic_struct> for #builder_name<#(#builder_type_parameters,)*>
                 #where_clause
             {
-                fn build(self, world: &mut #path::world::World) -> <#generic_struct as #path::system::SystemParam>::State {
+                unsafe fn build(
+                    self,
+                    world: &mut #path::world::World,
+                    shared_states: &#path::system::SharedStates,
+                ) -> <#generic_struct as #path::system::SystemParam>::State {
                     let #builder_name { #(#field_members: #field_locals,)* } = self;
-                    #state_struct_name {
-                        state: #path::system::SystemParamBuilder::build((#(#tuple_patterns,)*), world)
+                    // SAFETY: requirements are upheld by caller
+                    unsafe {
+                        #state_struct_name {
+                            state: #path::system::SystemParamBuilder::build(
+                                (#(#tuple_patterns,)*),
+                                world,
+                                shared_states,
+                            )
+                        }
                     }
                 }
             }
@@ -431,9 +455,31 @@ fn derive_system_param_impl(
                 type State = #state_struct_name<#punctuated_generic_idents>;
                 type Item<'w, 's> = #struct_name #ty_generics;
 
-                fn init_state(world: &mut #path::world::World) -> Self::State {
+                fn shared<'w, 's>() -> &'static [&'static #path::system::SharedStateVTable] {
+                    use #path::__macro_exports::{OnceLock, Vec};
+                    use core::ptr;
+
+                    static SHARED: OnceLock<&'static [&'static #path::system::SharedStateVTable]>
+                        = OnceLock::new();
+                    SHARED.get_or_init(|| {
+                        let mut shared = Vec::new();
+                        #shared_states
+
+                        shared.sort_unstable_by_key(|p| ptr::from_ref(*p) as usize);
+                        shared.dedup_by_key(|p| ptr::from_ref(*p) as usize);
+
+                        shared.leak()
+                    })
+                }
+
+                unsafe fn init_state(
+                    world: &mut #path::world::World,
+                    shared_states: &#path::system::SharedStates,
+                ) -> Self::State {
                     #state_struct_name {
-                        state: <#fields_alias::<'_, '_, #punctuated_generic_idents> as #path::system::SystemParam>::init_state(world),
+                        state: <
+                            #fields_alias::<'_, '_, #punctuated_generic_idents> as #path::system::SystemParam
+                        >::init_state(world, shared_states),
                     }
                 }
 

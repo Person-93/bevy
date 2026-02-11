@@ -127,6 +127,7 @@ pub mod __macro_exports {
     // to `Vec` in `no_std` and `std` contexts.
     pub use crate::query::DebugCheckedUnwrap;
     pub use alloc::vec::Vec;
+    pub use bevy_platform::sync::OnceLock;
 }
 
 /// Event sent when a hotpatch happens.

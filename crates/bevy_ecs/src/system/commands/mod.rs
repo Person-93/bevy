@@ -30,7 +30,8 @@ use crate::{
     resource::Resource,
     schedule::ScheduleLabel,
     system::{
-        Deferred, IntoSystem, RegisteredSystem, SystemId, SystemInput, SystemParamValidationError,
+        Deferred, IntoSystem, RegisteredSystem, SharedStates, SystemId, SystemInput,
+        SystemParamValidationError,
     },
     world::{
         command_queue::RawCommandQueue, unsafe_world_cell::UnsafeWorldCell, CommandQueue,
@@ -129,12 +130,21 @@ const _: () = {
 
         type Item<'w, 's> = Commands<'w, 's>;
 
+        fn shared() -> &'static [&'static super::SharedStateVTable] {
+            // TODO commands should share their internal queue
+            &[]
+        }
+
         #[track_caller]
-        fn init_state(world: &mut World) -> Self::State {
+        unsafe fn init_state(world: &mut World, shared_states: &SharedStates) -> Self::State {
             FetchState {
-                state: <__StructFieldsAlias<'_, '_> as bevy_ecs::system::SystemParam>::init_state(
-                    world,
-                ),
+                // SAFETY: requirements are upheld by callee
+                state: unsafe {
+                    <__StructFieldsAlias<'_, '_> as bevy_ecs::system::SystemParam>::init_state(
+                        world,
+                        shared_states,
+                    )
+                },
             }
         }
 

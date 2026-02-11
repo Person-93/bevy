@@ -24,8 +24,8 @@ use tracing::{info_span, Span};
 use alloc::string::ToString as _;
 
 use super::{
-    IntoSystem, ReadOnlySystem, RunSystemError, SystemParamBuilder, SystemParamValidationError,
-    SystemStateFlags,
+    IntoSystem, ReadOnlySystem, RunSystemError, SharedStates, SystemParamBuilder,
+    SystemParamValidationError, SystemStateFlags,
 };
 
 /// The metadata of a [`System`].
@@ -239,6 +239,8 @@ impl SystemMeta {
 pub struct SystemState<Param: SystemParam + 'static> {
     meta: SystemMeta,
     param_state: Param::State,
+    // NOTE `param_state` must be dropped before `shared_states`
+    shared_states: SharedStates,
     world_id: WorldId,
 }
 
@@ -307,7 +309,9 @@ impl<Param: SystemParam> SystemState<Param> {
     pub fn new(world: &mut World) -> Self {
         let mut meta = SystemMeta::new::<Param>();
         meta.last_run = world.change_tick().relative_to(Tick::MAX);
-        let param_state = Param::init_state(world);
+        let shared_states = SharedStates::new(Param::shared(), world);
+        // SAFETY: drop order is upheld by field order of `Self`
+        let param_state = unsafe { Param::init_state(world, &shared_states) };
         let mut component_access_set = FilteredAccessSet::new();
         // We need to call `init_access` to ensure there are no panics from conflicts within `Param`,
         // even though we don't use the calculated access.
@@ -315,6 +319,7 @@ impl<Param: SystemParam> SystemState<Param> {
         Self {
             meta,
             param_state,
+            shared_states,
             world_id: world.id(),
         }
     }
@@ -323,7 +328,9 @@ impl<Param: SystemParam> SystemState<Param> {
     pub(crate) fn from_builder(world: &mut World, builder: impl SystemParamBuilder<Param>) -> Self {
         let mut meta = SystemMeta::new::<Param>();
         meta.last_run = world.change_tick().relative_to(Tick::MAX);
-        let param_state = builder.build(world);
+        let shared_states = SharedStates::new(Param::shared(), world);
+        // SAFETY: drop order is upheld by `SystemState::drop
+        let param_state = unsafe { builder.build(world, &shared_states) };
         let mut component_access_set = FilteredAccessSet::new();
         // We need to call `init_access` to ensure there are no panics from conflicts within `Param`,
         // even though we don't use the calculated access.
@@ -331,6 +338,7 @@ impl<Param: SystemParam> SystemState<Param> {
         Self {
             meta,
             param_state,
+            shared_states,
             world_id: world.id(),
         }
     }
@@ -349,6 +357,7 @@ impl<Param: SystemParam> SystemState<Param> {
             self.meta,
             Some(FunctionSystemState {
                 param: self.param_state,
+                shared_states: self.shared_states,
                 world_id: self.world_id,
             }),
         )
@@ -522,10 +531,25 @@ where
 struct FunctionSystemState<P: SystemParam> {
     /// The cached state of the system's [`SystemParam`]s.
     param: P::State,
+    // NOTE: `param` must be dropped before `shared_states`
+    #[expect(dead_code, reason = "unsafely used in `param`")]
+    shared_states: SharedStates,
     /// The id of the [`World`] this system was initialized with. If the world
     /// passed to [`System::run_unsafe`] or [`System::validate_param_unsafe`] does not match
     /// this id, a panic will occur.
     world_id: WorldId,
+}
+
+impl<P: SystemParam> FunctionSystemState<P> {
+    fn new(world: &mut World) -> Self {
+        let shared_states = SharedStates::new(P::shared(), world);
+        Self {
+            // SAFETY: drop order is upheld by field order
+            param: unsafe { P::init_state(world, &shared_states) },
+            shared_states,
+            world_id: world.id(),
+        }
+    }
 }
 
 impl<Marker, In, Out, F> FunctionSystem<Marker, In, Out, F>
@@ -746,10 +770,9 @@ where
                 "System built with a different world than the one it was added to.",
             );
         }
-        let state = self.state.get_or_insert_with(|| FunctionSystemState {
-            param: F::Param::init_state(world),
-            world_id: world.id(),
-        });
+        let state = self
+            .state
+            .get_or_insert_with(|| FunctionSystemState::new(world));
         self.system_meta.last_run = world.change_tick().relative_to(Tick::MAX);
         let mut component_access_set = FilteredAccessSet::new();
         F::Param::init_access(
