@@ -395,7 +395,7 @@ fn derive_system_param_impl(
     };
     let shared_states = fields.iter().fold(shared_self, |mut tokens, field| {
         let ty = &field.ty;
-        tokens.extend(quote! { shared.extend(<#ty as SystemParam>::shared()); });
+        tokens.extend(quote! { shared.extend(<#ty as #path::system::SystemParam>::shared()); });
         tokens
     });
 
