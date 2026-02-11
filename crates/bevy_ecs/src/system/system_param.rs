@@ -469,7 +469,7 @@ impl SharedStateVTable {
             Box::leak(Box::new(SharedStateVTable {
                 init: |world| {
                     let state = Box::new(S::init(world));
-                    NonNull::from_ref(Box::leak(state)).cast()
+                    NonNull::new(Box::into_raw(state)).unwrap().cast()
                 },
 
                 apply: |ptr, system_meta, world| {
