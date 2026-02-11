@@ -866,8 +866,11 @@ macro_rules! impl_param_set {
             type Item<'w, 's> = ParamSet<'w, 's, ($($param,)*)>;
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                static SHARED: OnceLock<&'static [&'static SharedStateVTable]> = OnceLock::new();
-                SHARED.get_or_init(|| {
+                use bevy_platform::sync::Mutex;
+
+                static SHARED: Mutex<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
+                    Mutex::new(HashMap::new());
+                SHARED.lock().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(|| {
                     let mut shared = Vec::new();
                     $(shared.extend($param::shared());)*
 
@@ -2475,8 +2478,11 @@ macro_rules! impl_system_param_tuple {
             type Item<'w, 's> = ($($param::Item::<'w, 's>,)*);
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                static SHARED: OnceLock<&'static [&'static SharedStateVTable]> = OnceLock::new();
-                SHARED.get_or_init(|| {
+                use bevy_platform::sync::Mutex;
+
+                static SHARED: Mutex<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
+                    Mutex::new(HashMap::new());
+                SHARED.lock().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(|| {
                     let mut shared = Vec::new();
                     $(shared.extend($param::shared());)*
 
