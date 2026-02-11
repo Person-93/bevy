@@ -464,16 +464,14 @@ fn derive_system_param_impl(
 
                 fn shared<'w, 's>() -> &'static [&'static #path::system::SharedStateVTable] {
                     use #path::__macro_exports::{OnceLock, Vec};
-                    use core::ptr;
-
                     static SHARED: OnceLock<&'static [&'static #path::system::SharedStateVTable]>
                         = OnceLock::new();
                     SHARED.get_or_init(|| {
                         let mut shared = Vec::new();
                         #shared_states
 
-                        shared.sort_unstable_by_key(|p| ptr::from_ref(*p) as usize);
-                        shared.dedup_by_key(|p| ptr::from_ref(*p) as usize);
+                        shared.sort_unstable();
+                        shared.dedup();
 
                         shared.leak()
                     })

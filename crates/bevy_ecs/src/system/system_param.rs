@@ -495,6 +495,29 @@ impl SharedStateVTable {
     }
 }
 
+impl Ord for SharedStateVTable {
+    #[inline]
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.type_id.cmp(&other.type_id)
+    }
+}
+
+impl PartialOrd for SharedStateVTable {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for SharedStateVTable {}
+
+impl PartialEq for SharedStateVTable {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.type_id == other.type_id
+    }
+}
+
 /// A [`SystemParam`] that only reads a given [`World`].
 ///
 /// # Safety
@@ -843,15 +866,13 @@ macro_rules! impl_param_set {
             type Item<'w, 's> = ParamSet<'w, 's, ($($param,)*)>;
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                use core::ptr;
-
                 static SHARED: OnceLock<&'static [&'static SharedStateVTable]> = OnceLock::new();
                 SHARED.get_or_init(|| {
                     let mut shared = Vec::new();
                     $(shared.extend($param::shared());)*
 
-                    shared.sort_unstable_by_key(|p| ptr::from_ref(*p) as usize);
-                    shared.dedup_by_key(|p| ptr::from_ref(*p) as usize);
+                    shared.sort_unstable();
+                    shared.dedup();
 
                     shared.leak()
                 })
@@ -2454,15 +2475,13 @@ macro_rules! impl_system_param_tuple {
             type Item<'w, 's> = ($($param::Item::<'w, 's>,)*);
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                use core::ptr;
-
                 static SHARED: OnceLock<&'static [&'static SharedStateVTable]> = OnceLock::new();
                 SHARED.get_or_init(|| {
                     let mut shared = Vec::new();
                     $(shared.extend($param::shared());)*
 
-                    shared.sort_unstable_by_key(|p| ptr::from_ref(*p) as usize);
-                    shared.dedup_by_key(|p| ptr::from_ref(*p) as usize);
+                    shared.sort_unstable();
+                    shared.dedup();
 
                     shared.leak()
                 })
