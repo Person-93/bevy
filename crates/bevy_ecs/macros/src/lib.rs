@@ -363,6 +363,7 @@ fn derive_system_param_impl(
     let state_struct_visibility = &ast.vis;
     let state_struct_name = ensure_no_collision(format_ident!("FetchState"), token_stream);
 
+    let mut shared_state = false;
     let mut shared_self = None;
     let mut builder_name = None;
     for meta in ast
@@ -375,6 +376,7 @@ fn derive_system_param_impl(
                 builder_name = Some(format_ident!("{struct_name}Builder"));
                 Ok(())
             } else if nested.path.is_ident("shared_state") {
+                shared_state = true;
                 shared_self =
                     Some(quote! { shared.push(#path::system::SharedStateVTable::new::<Self>()) });
                 Ok(())
@@ -383,14 +385,19 @@ fn derive_system_param_impl(
             }
         })?;
     }
+    let shared_state = shared_state;
 
-    let shared_states = fields
-        .iter()
-        .fold(shared_self.unwrap_or_default(), |mut tokens, field| {
-            let ty = &field.ty;
-            tokens.extend(quote! { shared.extend(<#ty as SystemParam>::shared()); });
-            tokens
-        });
+    let shared_self = if shared_state {
+        // quote! { shared.push(#path::system::SharedStateVTable::new::<Self>()); }
+        quote! { compile_error!("deriving `SystemParam` with shared state is not yet supported") }
+    } else {
+        quote! {}
+    };
+    let shared_states = fields.iter().fold(shared_self, |mut tokens, field| {
+        let ty = &field.ty;
+        tokens.extend(quote! { shared.extend(<#ty as SystemParam>::shared()); });
+        tokens
+    });
 
     let builder = builder_name.map(|builder_name| {
         let builder_type_parameters: Vec<Ident> = field_members.iter().map(|m| format_ident!("B{}", m)).collect();
