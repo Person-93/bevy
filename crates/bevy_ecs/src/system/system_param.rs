@@ -28,7 +28,7 @@ use bevy_platform::cell::SyncCell;
 use bevy_platform::collections::HashMap;
 use bevy_platform::hash::NoOpHash;
 use bevy_platform::sync::{PoisonError, RwLock};
-use bevy_ptr::{PtrMut, UnsafeCellDeref};
+use bevy_ptr::{Ptr, PtrMut, UnsafeCellDeref};
 use bevy_utils::prelude::DebugName;
 use bevy_utils::TypeIdMap;
 use core::{
@@ -335,6 +335,14 @@ pub trait SystemParamSharedState: Send + Sync + 'static {
     /// Creates a new instance of the state
     fn init(world: &mut World) -> Self;
 
+    /// Registers any [`World`] access used by this [`SystemParamSharedState`]
+    fn init_access(
+        &self,
+        system_meta: &mut SystemMeta,
+        component_access_set: &mut FilteredAccessSet,
+        world: &mut World,
+    );
+
     /// Applies any deferred mutations stored in this state.
     #[inline]
     #[expect(
@@ -400,6 +408,18 @@ impl SharedStates {
         Some(self.0.get(&TypeId::of::<S>())?.ptr())
     }
 
+    /// Registers any [`World`] access used by these [`SharedStates`]
+    pub fn init_access(
+        &self,
+        system_meta: &mut SystemMeta,
+        component_access_set: &mut FilteredAccessSet,
+        world: &mut World,
+    ) {
+        for state in self.0.values() {
+            state.init_access(system_meta, component_access_set, world);
+        }
+    }
+
     /// Apply the deferred mutations from the shared states
     pub fn apply_deferred(&mut self, system_meta: &SystemMeta, world: &mut World) {
         for state in self.0.values_mut() {
@@ -433,9 +453,26 @@ impl SharedStateData {
         }
     }
 
+    pub fn init_access(
+        &self,
+        system_meta: &mut SystemMeta,
+        component_access_set: &mut FilteredAccessSet,
+        world: &mut World,
+    ) {
+        // SAFETY: ptr is the correct type
+        unsafe {
+            (self.vtable.init_access)(
+                Ptr::new(self.data),
+                system_meta,
+                component_access_set,
+                world,
+            );
+        }
+    }
+
     pub fn apply(&mut self, system_meta: &SystemMeta, world: &mut World) {
         // SAFETY:
-        // 1. The ptr will only be `Some` if it points to a valid item
+        // 1. The ptr is the correct type
         // 2. We can make a `PtrMut` because we have borrowed `&mut self`
         unsafe {
             (self.vtable.apply)(PtrMut::new(self.data), system_meta, world);
@@ -444,7 +481,7 @@ impl SharedStateData {
 
     pub fn queue(&mut self, system_meta: &SystemMeta, world: DeferredWorld) {
         // SAFETY:
-        // 1. The ptr will only be `Some` if it points to a valid item
+        // 1. The ptr is the correct type
         // 2. We can make a `PtrMut` because we have borrowed `&mut self`
         unsafe {
             (self.vtable.queue)(PtrMut::new(self.data), system_meta, world);
@@ -469,6 +506,12 @@ impl Drop for SharedStateData {
 /// The type returned by [`SystemParam::shared`]
 pub struct SharedStateVTable {
     init: fn(&mut World) -> NonNull<u8>,
+    init_access: unsafe fn(
+        Ptr,
+        system_meta: &mut SystemMeta,
+        component_access_set: &mut FilteredAccessSet,
+        world: &mut World,
+    ),
     apply: unsafe fn(PtrMut, &SystemMeta, &mut World),
     queue: unsafe fn(PtrMut, &SystemMeta, DeferredWorld),
     drop: unsafe fn(NonNull<u8>),
@@ -486,6 +529,12 @@ impl SharedStateVTable {
                 init: |world| {
                     let state = Box::new(S::init(world));
                     NonNull::new(Box::into_raw(state)).unwrap().cast()
+                },
+
+                init_access: |ptr, system_meta, component_access_set, world| {
+                    // SAFETY: ptr is the correct type
+                    let slf = unsafe { ptr.deref() };
+                    S::init_access(slf, system_meta, component_access_set, world);
                 },
 
                 apply: |ptr, system_meta, world| {
@@ -1714,7 +1763,6 @@ unsafe impl<T: SystemBuffer> SystemParam for Deferred<'_, T> {
 
     fn init_access(
         _state: &Self::State,
-
         system_meta: &mut SystemMeta,
         _component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -3710,6 +3758,14 @@ mod tests {
             fn init(_world: &mut World) -> Self {
                 unreachable!()
             }
+
+            fn init_access(
+                &self,
+                _system_meta: &mut SystemMeta,
+                _component_access_set: &mut FilteredAccessSet,
+                _world: &mut World,
+            ) {
+            }
         }
 
         // SAFETY: no world access
@@ -3752,6 +3808,14 @@ mod tests {
             fn init(_world: &mut World) -> Self {
                 unreachable!()
             }
+
+            fn init_access(
+                &self,
+                _system_meta: &mut SystemMeta,
+                _component_access_set: &mut FilteredAccessSet,
+                _world: &mut World,
+            ) {
+            }
         }
     }
 
@@ -3790,6 +3854,15 @@ mod tests {
                 SharedFlag {
                     flag: Arc::new(AtomicBool::new(false)),
                 }
+            }
+
+            fn init_access(
+                &self,
+                system_meta: &mut SystemMeta,
+                _component_access_set: &mut FilteredAccessSet,
+                _world: &mut World,
+            ) {
+                system_meta.set_has_deferred();
             }
         }
 

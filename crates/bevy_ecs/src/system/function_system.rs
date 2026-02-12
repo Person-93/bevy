@@ -309,13 +309,17 @@ impl<Param: SystemParam> SystemState<Param> {
     pub fn new(world: &mut World) -> Self {
         let mut meta = SystemMeta::new::<Param>();
         meta.last_run = world.change_tick().relative_to(Tick::MAX);
+        let mut component_access_set = FilteredAccessSet::new();
+
         let shared_states = SharedStates::new(Param::shared(), world);
+        shared_states.init_access(&mut meta, &mut component_access_set, world);
+
         // SAFETY: drop order is upheld by field order of `Self`
         let param_state = unsafe { Param::init_state(world, &shared_states) };
-        let mut component_access_set = FilteredAccessSet::new();
         // We need to call `init_access` to ensure there are no panics from conflicts within `Param`,
         // even though we don't use the calculated access.
         Param::init_access(&param_state, &mut meta, &mut component_access_set, world);
+
         Self {
             meta,
             param_state,
@@ -328,13 +332,17 @@ impl<Param: SystemParam> SystemState<Param> {
     pub(crate) fn from_builder(world: &mut World, builder: impl SystemParamBuilder<Param>) -> Self {
         let mut meta = SystemMeta::new::<Param>();
         meta.last_run = world.change_tick().relative_to(Tick::MAX);
+        let mut component_access_set = FilteredAccessSet::new();
+
         let shared_states = SharedStates::new(Param::shared(), world);
+        shared_states.init_access(&mut meta, &mut component_access_set, world);
+
         // SAFETY: drop order is upheld by `SystemState::drop
         let param_state = unsafe { builder.build(world, &shared_states) };
-        let mut component_access_set = FilteredAccessSet::new();
         // We need to call `init_access` to ensure there are no panics from conflicts within `Param`,
         // even though we don't use the calculated access.
         Param::init_access(&param_state, &mut meta, &mut component_access_set, world);
+
         Self {
             meta,
             param_state,
@@ -779,6 +787,9 @@ where
             .get_or_insert_with(|| FunctionSystemState::new(world));
         self.system_meta.last_run = world.change_tick().relative_to(Tick::MAX);
         let mut component_access_set = FilteredAccessSet::new();
+        state
+            .shared_states
+            .init_access(&mut self.system_meta, &mut component_access_set, world);
         F::Param::init_access(
             &state.param,
             &mut self.system_meta,
