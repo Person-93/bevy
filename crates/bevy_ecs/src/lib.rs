@@ -219,12 +219,19 @@ mod tests {
         #[derive(Resource)]
         struct DidRun;
 
+        let mut schedule = Schedule::default();
+        schedule.add_systems(move |mut commands: Commands| {
+            commands.insert_resource(DidRun);
+        });
+
+        let mut world = World::default();
+        schedule.run(&mut world);
+        assert!(world.contains_resource::<DidRun>());
+
         let mut world = World::default();
         world
             .run_system_cached(move |mut commands: Commands| {
-                commands.queue(move |world: &mut World| {
-                    world.insert_resource(DidRun);
-                });
+                commands.insert_resource(DidRun);
             })
             .unwrap();
 
