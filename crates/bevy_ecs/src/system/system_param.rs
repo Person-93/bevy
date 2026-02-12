@@ -27,7 +27,7 @@ pub use bevy_ecs_macros::SystemParam;
 use bevy_platform::cell::SyncCell;
 use bevy_platform::collections::HashMap;
 use bevy_platform::hash::NoOpHash;
-use bevy_platform::sync::{OnceLock, RwLock};
+use bevy_platform::sync::{OnceLock, PoisonError, RwLock};
 use bevy_ptr::{PtrMut, UnsafeCellDeref};
 use bevy_utils::prelude::DebugName;
 use bevy_utils::TypeIdMap;
@@ -473,6 +473,9 @@ pub struct SharedStateVTable {
     queue: unsafe fn(PtrMut, &SystemMeta, DeferredWorld),
     drop: unsafe fn(NonNull<u8>),
     type_id: TypeId,
+
+    #[cfg(feature = "debug")]
+    type_name: &'static str,
 }
 
 impl SharedStateVTable {
@@ -504,8 +507,24 @@ impl SharedStateVTable {
                 },
 
                 type_id: TypeId::of::<S>(),
+
+                #[cfg(feature = "debug")]
+                type_name: core::any::type_name::<S>(),
             }))
         })
+    }
+}
+
+impl Debug for SharedStateVTable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("SharedStateVTable");
+
+        #[cfg(feature = "debug")]
+        d.field("type_name", &self.type_name);
+        #[cfg(not(feature = "debug"))]
+        d.field("type_name", &"<enable debug feature to see the name>");
+
+        d.finish_non_exhaustive()
     }
 }
 
@@ -880,21 +899,14 @@ macro_rules! impl_param_set {
             type Item<'w, 's> = ParamSet<'w, 's, ($($param,)*)>;
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                static VTABLES: RwLock<TypeIdMap<&'static [&'static SharedStateVTable]>> =
-                    RwLock::new(TypeIdMap::with_hasher(NoOpHash));
+                TUPLE_VTABLES.get_or_insert::<Self::State>(|| {
+                    let mut shared = Vec::new();
+                    $(shared.extend($param::shared());)*
 
-                if let Some(vtable) = VTABLES.read().unwrap().get(&TypeId::of::<Self::State>()) {
-                    return vtable;
-                }
+                    shared.sort_unstable();
+                    shared.dedup();
 
-                let mut shared = Vec::new();
-                $(shared.extend($param::shared());)*
-
-                shared.sort_unstable();
-                shared.dedup();
-
-                VTABLES.write().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(move || {
-                    shared.leak()
+                    shared
                 })
             }
 
@@ -998,6 +1010,65 @@ macro_rules! impl_param_set {
 }
 
 all_tuples_enumerated!(impl_param_set, 1, 8, P, p);
+
+static TUPLE_VTABLES: TupleVTables = TupleVTables::new();
+
+/// Adapted from [`bevy_reflect::utility::GenericTypeCell`]
+struct TupleVTables(RwLock<TypeIdMap<&'static [&'static SharedStateVTable]>>);
+
+impl TupleVTables {
+    const fn new() -> Self {
+        Self(RwLock::new(TypeIdMap::with_hasher(NoOpHash)))
+    }
+
+    fn get_or_insert<G>(
+        &self,
+        f: fn() -> Vec<&'static SharedStateVTable>,
+    ) -> &'static [&'static SharedStateVTable]
+    where
+        G: Any + ?Sized,
+    {
+        self.get_or_insert_by_type_id(TypeId::of::<G>(), f)
+    }
+
+    fn get_by_type_id(&self, type_id: TypeId) -> Option<&'static [&'static SharedStateVTable]> {
+        self.0
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(&type_id)
+            .copied()
+    }
+
+    fn get_or_insert_by_type_id(
+        &self,
+        type_id: TypeId,
+        f: fn() -> Vec<&'static SharedStateVTable>,
+    ) -> &'static [&'static SharedStateVTable] {
+        match self.get_by_type_id(type_id) {
+            Some(info) => info,
+            None => self.insert_by_type_id(type_id, f()),
+        }
+    }
+
+    fn insert_by_type_id(
+        &self,
+        type_id: TypeId,
+        value: Vec<&'static SharedStateVTable>,
+    ) -> &'static [&'static SharedStateVTable] {
+        let mut write_lock = self.0.write().unwrap_or_else(PoisonError::into_inner);
+
+        write_lock
+            .entry(type_id)
+            .insert({
+                // We leak here in order to obtain a `&'static` reference.
+                // Otherwise, we won't be able to return a reference due to the `RwLock`.
+                // This should be okay, though, since we expect it to remain statically
+                // available over the course of the application.
+                value.leak()
+            })
+            .get()
+    }
+}
 
 // SAFETY: Res only reads a single World resource
 unsafe impl<'a, T: Resource> ReadOnlySystemParam for Res<'a, T> {}
@@ -2495,21 +2566,14 @@ macro_rules! impl_system_param_tuple {
             type Item<'w, 's> = ($($param::Item::<'w, 's>,)*);
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                static VTABLES: RwLock<TypeIdMap<&'static [&'static SharedStateVTable]>> =
-                    RwLock::new(TypeIdMap::with_hasher(NoOpHash));
+                TUPLE_VTABLES.get_or_insert::<Self::State>(|| {
+                    let mut shared = Vec::new();
+                    $(shared.extend($param::shared());)*
 
-                if let Some(vtable) = VTABLES.read().unwrap().get(&TypeId::of::<Self::State>()) {
-                    return vtable;
-                }
+                    shared.sort_unstable();
+                    shared.dedup();
 
-                let mut shared = Vec::new();
-                $(shared.extend($param::shared());)*
-
-                shared.sort_unstable();
-                shared.dedup();
-
-                VTABLES.write().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(move || {
-                    shared.leak()
+                    shared
                 })
             }
 
@@ -3569,6 +3633,112 @@ mod tests {
         schedule.run(&mut world);
 
         fn message_system(_: MessageReader<MissingEvent>) {}
+    }
+
+    #[test]
+    fn tuple_vtables_are_not_all_the_same() {
+        assert_ne!(
+            TUPLE_VTABLES.get_or_insert::<(ParamState, ParamState)>(|| vec![
+                SharedStateVTable::of::<ParamState>()
+            ]),
+            TUPLE_VTABLES.get_or_insert::<(OtherParamState, OtherParamState)>(|| vec![
+                SharedStateVTable::of::<OtherParamState>()
+            ]),
+            "`TupleVTables` returns the same list of vtables for different tuples",
+        );
+
+        assert_ne!(
+            <(Param, Param)>::shared(),
+            <(OtherParam, OtherParam)>::shared(),
+            "`<(..)>::shared` returns the same list of vtables for different tuples",
+        );
+
+        struct Param;
+        struct ParamState;
+
+        struct OtherParam;
+        struct OtherParamState;
+
+        // SAFETY: no world access
+        unsafe impl SystemParam for Param {
+            type State = SharedState<ParamState>;
+
+            type Item<'world, 'state> = Self;
+
+            fn shared() -> &'static [&'static SharedStateVTable] {
+                static VTABLE: OnceLock<&'static [&'static SharedStateVTable]> = OnceLock::new();
+                VTABLE.get_or_init(|| Box::leak(Box::new([SharedStateVTable::of::<ParamState>()])))
+            }
+
+            unsafe fn init_state(_world: &mut World, _shared_states: &SharedStates) -> Self::State {
+                unreachable!()
+            }
+
+            fn init_access(
+                _state: &Self::State,
+                _system_meta: &mut SystemMeta,
+                _component_access_set: &mut FilteredAccessSet,
+                _world: &mut World,
+            ) {
+            }
+
+            unsafe fn get_param<'world, 'state>(
+                _state: &'state mut Self::State,
+                _system_meta: &SystemMeta,
+                _world: UnsafeWorldCell<'world>,
+                _change_tick: Tick,
+            ) -> Self::Item<'world, 'state> {
+                Self
+            }
+        }
+
+        impl SystemParamSharedState for ParamState {
+            fn init(_world: &mut World) -> Self {
+                unreachable!()
+            }
+        }
+
+        // SAFETY: no world access
+        unsafe impl SystemParam for OtherParam {
+            type State = (SharedState<OtherParamState>,);
+
+            type Item<'world, 'state> = Self;
+
+            fn shared() -> &'static [&'static SharedStateVTable] {
+                static VTABLE: OnceLock<&'static [&'static SharedStateVTable]> = OnceLock::new();
+                VTABLE.get_or_init(|| {
+                    Box::leak(Box::new([SharedStateVTable::of::<OtherParamState>()]))
+                })
+            }
+
+            unsafe fn init_state(_world: &mut World, _shared_states: &SharedStates) -> Self::State {
+                unreachable!()
+            }
+
+            fn init_access(
+                _state: &Self::State,
+                _system_meta: &mut SystemMeta,
+                _component_access_set: &mut FilteredAccessSet,
+                _world: &mut World,
+            ) {
+                unreachable!()
+            }
+
+            unsafe fn get_param<'world, 'state>(
+                _state: &'state mut Self::State,
+                _system_meta: &SystemMeta,
+                _world: UnsafeWorldCell<'world>,
+                _change_tick: Tick,
+            ) -> Self::Item<'world, 'state> {
+                unreachable!()
+            }
+        }
+
+        impl SystemParamSharedState for OtherParamState {
+            fn init(_world: &mut World) -> Self {
+                unreachable!()
+            }
+        }
     }
 
     #[test]
