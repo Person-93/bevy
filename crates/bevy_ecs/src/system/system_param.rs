@@ -26,9 +26,11 @@ use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 pub use bevy_ecs_macros::SystemParam;
 use bevy_platform::cell::SyncCell;
 use bevy_platform::collections::HashMap;
-use bevy_platform::sync::OnceLock;
+use bevy_platform::hash::NoOpHash;
+use bevy_platform::sync::{OnceLock, RwLock};
 use bevy_ptr::{PtrMut, UnsafeCellDeref};
 use bevy_utils::prelude::DebugName;
+use bevy_utils::TypeIdMap;
 use core::{
     any::Any,
     any::TypeId,
@@ -878,10 +880,8 @@ macro_rules! impl_param_set {
             type Item<'w, 's> = ParamSet<'w, 's, ($($param,)*)>;
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                use bevy_platform::sync::RwLock;
-
-                static VTABLES: RwLock<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
-                    RwLock::new(HashMap::new());
+                static VTABLES: RwLock<TypeIdMap<&'static [&'static SharedStateVTable]>> =
+                    RwLock::new(TypeIdMap::with_hasher(NoOpHash));
 
                 if let Some(vtable) = VTABLES.read().unwrap().get(&TypeId::of::<Self::State>()) {
                     return vtable;
@@ -892,7 +892,6 @@ macro_rules! impl_param_set {
 
                 shared.sort_unstable();
                 shared.dedup();
-
 
                 VTABLES.write().unwrap().entry(TypeId::of::<Self::State>()).or_insert_with(move || {
                     shared.leak()
@@ -2496,10 +2495,8 @@ macro_rules! impl_system_param_tuple {
             type Item<'w, 's> = ($($param::Item::<'w, 's>,)*);
 
             fn shared() -> &'static [&'static SharedStateVTable] {
-                use bevy_platform::sync::RwLock;
-
-                static VTABLES: RwLock<HashMap<TypeId, &'static [&'static SharedStateVTable]>> =
-                    RwLock::new(HashMap::new());
+                static VTABLES: RwLock<TypeIdMap<&'static [&'static SharedStateVTable]>> =
+                    RwLock::new(TypeIdMap::with_hasher(NoOpHash));
 
                 if let Some(vtable) = VTABLES.read().unwrap().get(&TypeId::of::<Self::State>()) {
                     return vtable;
