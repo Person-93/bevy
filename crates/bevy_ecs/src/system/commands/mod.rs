@@ -314,10 +314,12 @@ impl<'w, 's> Commands<'w, 's> {
     /// Take all commands from `other` and append them to `self`, leaving `other` empty.
     pub fn append(&mut self, other: &mut CommandQueue) {
         match &mut self.queue {
-            InternalQueue::CommandQueue(queue) => queue.bytes.append(&mut other.bytes),
+            InternalQueue::CommandQueue(queue) => {
+                queue.bytes.get_mut().append(other.bytes.get_mut());
+            }
             InternalQueue::RawCommandQueue(queue) => {
                 // SAFETY: Pointers in `RawCommandQueue` are never null
-                unsafe { queue.bytes.as_mut() }.append(&mut other.bytes);
+                unsafe { queue.bytes.as_mut() }.append(other.bytes.get_mut());
             }
         }
     }
