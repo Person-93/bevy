@@ -360,6 +360,29 @@ pub trait SystemParamSharedState: Send + Sync + 'static {
     fn queue(&mut self, system_meta: &SystemMeta, world: DeferredWorld) {}
 }
 
+impl<T: SystemBuffer + FromWorld + Sync> SystemParamSharedState for T {
+    fn init(world: &mut World) -> Self {
+        T::from_world(world)
+    }
+
+    fn init_access(
+        &self,
+        system_meta: &mut SystemMeta,
+        _component_access_set: &mut FilteredAccessSet,
+        _world: &mut World,
+    ) {
+        system_meta.set_has_deferred();
+    }
+
+    fn apply(&mut self, system_meta: &SystemMeta, world: &mut World) {
+        SystemBuffer::apply(self, system_meta, world);
+    }
+
+    fn queue(&mut self, system_meta: &SystemMeta, world: DeferredWorld) {
+        SystemBuffer::queue(self, system_meta, world);
+    }
+}
+
 /// Use this as the `SystemParam::State` for parts of the state that are shared
 pub struct SharedState<S: SystemParamSharedState>(NonNull<S>);
 

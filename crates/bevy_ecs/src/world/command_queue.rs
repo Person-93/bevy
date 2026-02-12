@@ -10,7 +10,7 @@ use core::{
     fmt::Debug,
     mem::{size_of, MaybeUninit},
     panic::AssertUnwindSafe,
-    ptr::{addr_of_mut, NonNull},
+    ptr::{addr_of, NonNull},
 };
 use log::warn;
 
@@ -119,13 +119,17 @@ impl CommandQueue {
     }
 
     /// Returns a [`RawCommandQueue`] instance sharing the underlying command queue.
-    pub(crate) fn get_raw(&mut self) -> RawCommandQueue {
-        // SAFETY: self is always valid memory
+    ///
+    /// # Safety
+    /// Caller must ensure that the `RawCommandQueue` is not used mutably at the same time
+    /// as `self` or any other raw command queues created from `self`.
+    pub(crate) unsafe fn get_raw(&self) -> RawCommandQueue {
+        // SAFETY: self is always valid memory and caller upholds mutability requirement
         unsafe {
             RawCommandQueue {
-                bytes: NonNull::new_unchecked(addr_of_mut!(self.bytes)),
-                cursor: NonNull::new_unchecked(addr_of_mut!(self.cursor)),
-                panic_recovery: NonNull::new_unchecked(addr_of_mut!(self.panic_recovery)),
+                bytes: NonNull::new_unchecked(addr_of!(self.bytes).cast_mut()),
+                cursor: NonNull::new_unchecked(addr_of!(self.cursor).cast_mut()),
+                panic_recovery: NonNull::new_unchecked(addr_of!(self.panic_recovery).cast_mut()),
             }
         }
     }
