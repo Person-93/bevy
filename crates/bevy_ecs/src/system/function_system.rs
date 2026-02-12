@@ -401,6 +401,7 @@ impl<Param: SystemParam> SystemState<Param> {
     /// This function should be called manually after the values returned by [`SystemState::get`] and [`SystemState::get_mut`]
     /// are finished being used.
     pub fn apply(&mut self, world: &mut World) {
+        self.shared_states.apply_deferred(&self.meta, world);
         Param::apply(&mut self.param_state, &self.meta, world);
     }
 
@@ -532,7 +533,6 @@ struct FunctionSystemState<P: SystemParam> {
     /// The cached state of the system's [`SystemParam`]s.
     param: P::State,
     // NOTE: `param` must be dropped before `shared_states`
-    #[expect(dead_code, reason = "unsafely used in `param`")]
     shared_states: SharedStates,
     /// The id of the [`World`] this system was initialized with. If the world
     /// passed to [`System::run_unsafe`] or [`System::validate_param_unsafe`] does not match
@@ -737,14 +737,18 @@ where
 
     #[inline]
     fn apply_deferred(&mut self, world: &mut World) {
-        let param_state = &mut self.state.as_mut().expect(Self::ERROR_UNINITIALIZED).param;
-        F::Param::apply(param_state, &self.system_meta, world);
+        let state = self.state.as_mut().expect(Self::ERROR_UNINITIALIZED);
+        state.shared_states.apply_deferred(&self.system_meta, world);
+        F::Param::apply(&mut state.param, &self.system_meta, world);
     }
 
     #[inline]
-    fn queue_deferred(&mut self, world: DeferredWorld) {
-        let param_state = &mut self.state.as_mut().expect(Self::ERROR_UNINITIALIZED).param;
-        F::Param::queue(param_state, &self.system_meta, world);
+    fn queue_deferred(&mut self, mut world: DeferredWorld) {
+        let state = self.state.as_mut().expect(Self::ERROR_UNINITIALIZED);
+        state
+            .shared_states
+            .queue_deferred(&self.system_meta, world.reborrow());
+        F::Param::queue(&mut state.param, &self.system_meta, world);
     }
 
     #[inline]

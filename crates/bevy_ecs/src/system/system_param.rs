@@ -397,6 +397,20 @@ impl SharedStates {
     pub unsafe fn get<S: SystemParamSharedState>(&self) -> Option<NonNull<S>> {
         Some(self.0.get(&TypeId::of::<S>())?.ptr())
     }
+
+    /// Apply the deferred mutations from the shared states
+    pub fn apply_deferred(&mut self, system_meta: &SystemMeta, world: &mut World) {
+        for state in self.0.values_mut() {
+            state.apply(system_meta, world);
+        }
+    }
+
+    /// Queue the deferred mutations from the shared states
+    pub fn queue_deferred(&mut self, system_meta: &SystemMeta, mut world: DeferredWorld) {
+        for state in self.0.values_mut() {
+            state.queue(system_meta, world.reborrow());
+        }
+    }
 }
 
 pub(crate) struct SharedStateData {
@@ -417,7 +431,6 @@ impl SharedStateData {
         }
     }
 
-    #[expect(dead_code, reason = "not yet implemented")]
     pub fn apply(&mut self, system_meta: &SystemMeta, world: &mut World) {
         // SAFETY:
         // 1. The ptr will only be `Some` if it points to a valid item
@@ -427,7 +440,6 @@ impl SharedStateData {
         }
     }
 
-    #[expect(dead_code, reason = "not yet implemented")]
     pub fn queue(&mut self, system_meta: &SystemMeta, world: DeferredWorld) {
         // SAFETY:
         // 1. The ptr will only be `Some` if it points to a valid item
