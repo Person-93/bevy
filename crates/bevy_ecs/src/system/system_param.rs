@@ -27,7 +27,7 @@ pub use bevy_ecs_macros::SystemParam;
 use bevy_platform::cell::SyncCell;
 use bevy_platform::collections::HashMap;
 use bevy_platform::hash::NoOpHash;
-use bevy_platform::sync::{OnceLock, PoisonError, RwLock};
+use bevy_platform::sync::{PoisonError, RwLock};
 use bevy_ptr::{PtrMut, UnsafeCellDeref};
 use bevy_utils::prelude::DebugName;
 use bevy_utils::TypeIdMap;
@@ -481,9 +481,8 @@ pub struct SharedStateVTable {
 impl SharedStateVTable {
     /// Get the vtable of `S`
     pub fn of<S: SystemParamSharedState>() -> &'static Self {
-        static VTABLE: OnceLock<&'static SharedStateVTable> = OnceLock::new();
-        VTABLE.get_or_init(|| {
-            Box::leak(Box::new(SharedStateVTable {
+        VTABLES.get_or_insert::<S>(|| {
+            Box::new(SharedStateVTable {
                 init: |world| {
                     let state = Box::new(S::init(world));
                     NonNull::new(Box::into_raw(state)).unwrap().cast()
@@ -510,7 +509,7 @@ impl SharedStateVTable {
 
                 #[cfg(feature = "debug")]
                 type_name: core::any::type_name::<S>(),
-            }))
+            })
         })
     }
 }
@@ -1011,27 +1010,28 @@ macro_rules! impl_param_set {
 
 all_tuples_enumerated!(impl_param_set, 1, 8, P, p);
 
-static TUPLE_VTABLES: TupleVTables = TupleVTables::new();
+static VTABLES: StaticPerType<Box<SharedStateVTable>> = StaticPerType::new();
+static TUPLE_VTABLES: StaticPerType<Vec<&'static SharedStateVTable>> = StaticPerType::new();
 
 /// Adapted from [`bevy_reflect::utility::GenericTypeCell`]
-struct TupleVTables(RwLock<TypeIdMap<&'static [&'static SharedStateVTable]>>);
+struct StaticPerType<L: Leaky>(
+    RwLock<TypeIdMap<&'static L::Leaked>>,
+    PhantomData<fn() -> L>,
+);
 
-impl TupleVTables {
+impl<L: Leaky> StaticPerType<L> {
     const fn new() -> Self {
-        Self(RwLock::new(TypeIdMap::with_hasher(NoOpHash)))
+        Self(RwLock::new(TypeIdMap::with_hasher(NoOpHash)), PhantomData)
     }
 
-    fn get_or_insert<G>(
-        &self,
-        f: fn() -> Vec<&'static SharedStateVTable>,
-    ) -> &'static [&'static SharedStateVTable]
+    fn get_or_insert<G>(&self, f: fn() -> L) -> &'static L::Leaked
     where
         G: Any + ?Sized,
     {
         self.get_or_insert_by_type_id(TypeId::of::<G>(), f)
     }
 
-    fn get_by_type_id(&self, type_id: TypeId) -> Option<&'static [&'static SharedStateVTable]> {
+    fn get_by_type_id(&self, type_id: TypeId) -> Option<&'static L::Leaked> {
         self.0
             .read()
             .unwrap_or_else(PoisonError::into_inner)
@@ -1039,22 +1039,14 @@ impl TupleVTables {
             .copied()
     }
 
-    fn get_or_insert_by_type_id(
-        &self,
-        type_id: TypeId,
-        f: fn() -> Vec<&'static SharedStateVTable>,
-    ) -> &'static [&'static SharedStateVTable] {
+    fn get_or_insert_by_type_id(&self, type_id: TypeId, f: fn() -> L) -> &'static L::Leaked {
         match self.get_by_type_id(type_id) {
             Some(info) => info,
             None => self.insert_by_type_id(type_id, f()),
         }
     }
 
-    fn insert_by_type_id(
-        &self,
-        type_id: TypeId,
-        value: Vec<&'static SharedStateVTable>,
-    ) -> &'static [&'static SharedStateVTable] {
+    fn insert_by_type_id(&self, type_id: TypeId, value: L) -> &'static L::Leaked {
         let mut write_lock = self.0.write().unwrap_or_else(PoisonError::into_inner);
 
         write_lock
@@ -1067,6 +1059,28 @@ impl TupleVTables {
                 value.leak()
             })
             .get()
+    }
+}
+
+trait Leaky {
+    type Leaked: ?Sized + 'static;
+
+    fn leak(self) -> &'static Self::Leaked;
+}
+
+impl<T: 'static> Leaky for Box<T> {
+    type Leaked = T;
+
+    fn leak(self) -> &'static Self::Leaked {
+        Box::leak(self)
+    }
+}
+
+impl<T: 'static> Leaky for Vec<T> {
+    type Leaked = [T];
+
+    fn leak(self) -> &'static Self::Leaked {
+        Vec::leak(self)
     }
 }
 
@@ -3357,7 +3371,7 @@ mod tests {
     use super::*;
     use crate::system::{assert_is_system, SystemState};
     use alloc::vec;
-    use bevy_platform::sync::Arc;
+    use bevy_platform::sync::{Arc, OnceLock};
     use core::cell::RefCell;
     use core::sync::atomic::AtomicBool;
 
@@ -3636,7 +3650,7 @@ mod tests {
     }
 
     #[test]
-    fn tuple_vtables_are_not_all_the_same() {
+    fn vtables_are_not_all_the_same() {
         assert_ne!(
             TUPLE_VTABLES.get_or_insert::<(ParamState, ParamState)>(|| vec![
                 SharedStateVTable::of::<ParamState>()
