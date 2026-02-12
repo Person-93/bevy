@@ -649,7 +649,6 @@ unsafe impl<D: QueryData + 'static, F: QueryFilter + 'static> SystemParam for Qu
 
     fn init_access(
         state: &Self::State,
-
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         world: &mut World,
@@ -668,7 +667,6 @@ unsafe impl<D: QueryData + 'static, F: QueryFilter + 'static> SystemParam for Qu
     #[inline]
     unsafe fn get_param<'w, 's>(
         state: &'s mut Self::State,
-
         system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         change_tick: Tick,
@@ -745,7 +743,6 @@ unsafe impl<'a, 'b, D: QueryData + 'static, F: QueryFilter + 'static> SystemPara
     #[inline]
     unsafe fn validate_param(
         state: &mut Self::State,
-
         system_meta: &SystemMeta,
         world: UnsafeWorldCell,
     ) -> Result<(), SystemParamValidationError> {
@@ -949,7 +946,6 @@ unsafe impl<'w, 's, D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> Re
 /// ```
 pub struct ParamSet<'w, 's, T: SystemParam> {
     param_states: &'s mut T::State,
-
     world: UnsafeWorldCell<'w>,
     system_meta: SystemMeta,
     change_tick: Tick,
@@ -968,7 +964,6 @@ macro_rules! impl_param_set {
         {
             type State = ($($param::State,)*);
             type Item<'w, 's> = ParamSet<'w, 's, ($($param,)*)>;
-
             fn shared() -> &'static [&'static SharedStateVTable] {
                 TUPLE_VTABLES.get_or_insert::<Self::State>(|| {
                     let mut shared = Vec::new();
@@ -1028,7 +1023,6 @@ macro_rules! impl_param_set {
             #[inline]
             unsafe fn validate_param<'w, 's>(
                 state: &'s mut Self::State,
-
                 system_meta: &SystemMeta,
                 world: UnsafeWorldCell<'w>,
             ) -> Result<(), SystemParamValidationError> {
@@ -1041,7 +1035,6 @@ macro_rules! impl_param_set {
             #[inline]
             unsafe fn get_param<'w, 's>(
                 state: &'s mut Self::State,
-
                 system_meta: &SystemMeta,
                 world: UnsafeWorldCell<'w>,
                 change_tick: Tick,
@@ -1171,7 +1164,6 @@ unsafe impl<'a, T: Resource> SystemParam for Res<'a, T> {
 
     fn init_access(
         &component_id: &Self::State,
-
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -1262,7 +1254,6 @@ unsafe impl<'a, T: Resource> SystemParam for ResMut<'a, T> {
 
     fn init_access(
         &component_id: &Self::State,
-
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -1317,7 +1308,6 @@ unsafe impl<'a, T: Resource> SystemParam for ResMut<'a, T> {
     #[inline]
     unsafe fn get_param<'w, 's>(
         &mut component_id: &'s mut Self::State,
-
         system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         change_tick: Tick,
@@ -1393,7 +1383,6 @@ unsafe impl<'w> SystemParam for DeferredWorld<'w> {
 
     fn init_access(
         _state: &Self::State,
-
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -1590,7 +1579,6 @@ unsafe impl<'a, T: FromWorld + Send + 'static> SystemParam for Local<'a, T> {
 
     fn init_access(
         _state: &Self::State,
-
         _system_meta: &mut SystemMeta,
         _component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -1804,7 +1792,6 @@ unsafe impl<T: SystemBuffer> SystemParam for Deferred<'_, T> {
     #[inline]
     unsafe fn get_param<'w, 's>(
         state: &'s mut Self::State,
-
         _system_meta: &SystemMeta,
         _world: UnsafeWorldCell<'w>,
         _change_tick: Tick,
@@ -1836,7 +1823,6 @@ unsafe impl SystemParam for ExclusiveMarker {
     #[inline]
     unsafe fn get_param<'world, 'state>(
         _state: &'state mut Self::State,
-
         _system_meta: &SystemMeta,
         _world: UnsafeWorldCell<'world>,
         _change_tick: Tick,
@@ -1937,7 +1923,6 @@ unsafe impl<'a, T: 'static> SystemParam for NonSend<'a, T> {
     #[inline]
     unsafe fn get_param<'w, 's>(
         &mut component_id: &'s mut Self::State,
-
         system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         change_tick: Tick,
@@ -1970,7 +1955,6 @@ unsafe impl<'a, T: 'static> SystemParam for NonSendMut<'a, T> {
 
     fn init_access(
         &component_id: &Self::State,
-
         system_meta: &mut SystemMeta,
         component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -1993,7 +1977,6 @@ unsafe impl<'a, T: 'static> SystemParam for NonSendMut<'a, T> {
     #[inline]
     unsafe fn validate_param(
         &mut component_id: &mut Self::State,
-
         _system_meta: &SystemMeta,
         world: UnsafeWorldCell,
     ) -> Result<(), SystemParamValidationError> {
@@ -2014,7 +1997,6 @@ unsafe impl<'a, T: 'static> SystemParam for NonSendMut<'a, T> {
     #[inline]
     unsafe fn get_param<'w, 's>(
         &mut component_id: &'s mut Self::State,
-
         system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         change_tick: Tick,
@@ -2057,7 +2039,6 @@ unsafe impl<'a> SystemParam for &'a Archetypes {
     #[inline]
     unsafe fn get_param<'w, 's>(
         _state: &'s mut Self::State,
-
         _system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         _change_tick: Tick,
@@ -2078,7 +2059,6 @@ unsafe impl<'a> SystemParam for &'a Components {
 
     fn init_access(
         _state: &Self::State,
-
         _system_meta: &mut SystemMeta,
         _component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -2088,7 +2068,6 @@ unsafe impl<'a> SystemParam for &'a Components {
     #[inline]
     unsafe fn get_param<'w, 's>(
         _state: &'s mut Self::State,
-
         _system_meta: &SystemMeta,
         world: UnsafeWorldCell<'w>,
         _change_tick: Tick,
@@ -2109,7 +2088,6 @@ unsafe impl<'a> SystemParam for &'a Entities {
 
     fn init_access(
         _state: &Self::State,
-
         _system_meta: &mut SystemMeta,
         _component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -2140,7 +2118,6 @@ unsafe impl<'a> SystemParam for &'a EntityAllocator {
 
     fn init_access(
         _state: &Self::State,
-
         _system_meta: &mut SystemMeta,
         _component_access_set: &mut FilteredAccessSet,
         _world: &mut World,
@@ -2238,7 +2215,6 @@ unsafe impl SystemParam for SystemChangeTick {
     #[inline]
     unsafe fn get_param<'w, 's>(
         _state: &'s mut Self::State,
-
         system_meta: &SystemMeta,
         _world: UnsafeWorldCell<'w>,
         change_tick: Tick,
