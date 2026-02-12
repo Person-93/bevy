@@ -61,7 +61,7 @@ use crate::{
 ///
 /// Add `mut commands: Commands` as a function argument to your system to get a
 /// copy of this struct that will be applied the next time a copy of [`ApplyDeferred`] runs.
-/// Commands are almost always used as a [`SystemParam`](crate::system::SystemParam).
+/// Commands are almost always used as a [`SystemParam`].
 ///
 /// ```
 /// # use bevy_ecs::prelude::*;
